@@ -21,6 +21,7 @@ data ConnectionType =
   | Divine
   | Index
   | Boat
+  | None
   deriving (Show, Eq)
 
 data Path = Path {
@@ -66,7 +67,7 @@ findPath start end paths = trace (printf "In findPath: start: %s, end: %s, paths
         -- We inject the start path, even if we have other paths,
         -- every time.  This way we don't have to make any
         -- decisions, and it's pretty cheap.
-        newPaths = reducePaths [start] $ expandPaths $ Path { pdest=start, pconns=[] } : paths
+        newPaths = reducePaths [] $ expandPaths $ Path { pdest=start, pconns=[Connection { origin=start, destination=start, ctype=None }] } : paths
 
 connections :: [Connection]
 connections = [
@@ -101,7 +102,7 @@ addChildren :: Elem -> [Elem] -> IO ()
 addChildren parent childs = sequence_ [addChild c parent | c <- childs]
 
 handleFind :: Elem -> Elem -> Elem -> EventData BasicEvent -> IO ()
-handleFind start end result event = do
+handleFind start end result _ = do
     clearChildren result
     maybeStart <- getValue start
     maybeEnd <- getValue end
