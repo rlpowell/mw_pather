@@ -7,7 +7,8 @@ ifdef HASTEC_VERSION
 	@echo "\n\nRUN MAKE ON THE OTHER SIDE!\n\n"
 else
 	sudo chcon -t svirt_sandbox_file_t -R /home/rlpowell/src/mw_pather/
-	zip source.zip Makefile index.html mw_pather.hs
+	rm source.zip
+	zip source.zip Makefile index.html mw_pather.hs Dockerfile
 	cp source.zip index.html mw_pather.js /home/rlpowell/public_html/media/public/mw_pather/
 	sudo chcon -t httpd_user_content_t /home/rlpowell/public_html/media/public/mw_pather/
 	@echo -e "\n\nRUN MAKE ON THE OTHER SIDE!\n\n"
