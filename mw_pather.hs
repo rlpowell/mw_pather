@@ -17,10 +17,6 @@ import Network.HTTP hiding (Connection)
 import Text.HTML.TagSoup
 #endif
 
-data API = API {
-    apiGetConns :: Remote (Server [[String]])
-  }
-
 data TraceLevel = Crazy | Debug | Info | Error deriving (Show, Eq, Ord)
 traceLevel = Crazy
 rlpTraceM :: (Monad m) => TraceLevel -> String -> m ()
@@ -117,11 +113,10 @@ pageToConnections originPage = do
             -- trace (printf "In destToConn: %s, %s, %s" originPage dest tName) $ 
 #endif
 
--- await :: Server State -> Server Message
--- await state = do
---   sid <- getSessionID
---   (clients, _) <- state
---   liftIO $ readIORef clients >>= maybe (return ("","")) C.takeMVar . lookup sid
+-- Server side function that checks an IORef and if it has boring
+-- data, runs makeConnections to get all the connection info and
+-- stuffs it into said IORef.  In either case, returns the
+-- connections.
 getConns :: Server (IORef [[String]]) -> Server [[String]]
 getConns remoteConnsIORef = do
   remoteConnsRef <- remoteConnsIORef
@@ -134,9 +129,9 @@ getConns remoteConnsIORef = do
     newConns <- liftIO $ readIORef remoteConnsRef
     return newConns
 
--- Make: (connections, done, to-do)
--- Repeatedly take the first to-do item, add all its connections, stick it in done, stick anything that comes up that isn't already in done or to-do in to-do
--- when to-do is empty, return connections
+-- Repeatedly take the first to-do item, add all its connections,
+-- stick it in done, stick anything that comes up that isn't already
+-- in done or to-do in to-do when to-do is empty, return connections
 makeConnections :: Set.Set Connection -> Set.Set LocationName -> Set.Set LocationName -> IO [Connection]
 makeConnections connections doneLocs toDoLocs
   | Set.null toDoLocs = do
@@ -266,9 +261,12 @@ handleSelection connections start end result = do
   _ <- onEvent end Change $ handleFind connections start end result
   return ()
 
-clientMain :: API -> Client ()
-clientMain api = do
-    connectionStr <- onServer $ apiGetConns api
+-- The client-side computation.  Takes one API call's info.
+clientMain :: Remote (Server [[String]]) -> Client ()
+clientMain remoteGetConns = do
+    -- Run our one API call: make the connection list on the server
+    -- and return it as a list of lists
+    connectionStr <- onServer remoteGetConns
     let connections = map listToConn connectionStr
     let locations = sort $ nub $ map destination connections
 
@@ -290,9 +288,14 @@ clientMain api = do
 main :: IO ()
 main = do
   runApp (mkConfig "vrici.lojban.org" 24601) $ do
+    -- Make an IORef on the server side to hold the results of the
+    -- web scraping.  liftServerIO gives it the App monad type
+    -- (specifically "App (Server a)", which is the monad we're in.
     remoteConns <- liftServerIO $ newIORef [["nothing"]]
 
-    -- Create an API object holding all available functions
-    api <- API <$> remote (getConns remoteConns)
+    -- Make an API call for the server-side function we use to get
+    -- the Connection list.
+    remoteGetConns <- remote (getConns remoteConns)
 
-    runClient $ clientMain api
+    -- Pass the API call in question to our client-side computation
+    runClient $ clientMain remoteGetConns
