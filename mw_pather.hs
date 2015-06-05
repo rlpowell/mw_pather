@@ -1,3 +1,23 @@
+{-
+  This is a combination program and extremely verbose Haste
+  ( http://haste-lang.org/ ) tutorial.
+
+  The program is a pathfinder for locations in the game Morrowind.
+
+  Specifically:
+
+  - on the server/ghc side, it scrapes the
+    http://uesp.net/wiki/Main_Page wiki for all the travel
+    information for the towns and cities.
+
+  - on the web/haste side, it retrieves and presents that data, lets
+    the user pick a start and destiation, and shows the shortest
+    path between them
+
+  The comments here are me clarifying to myself my understanding of
+  the various parts of this program, in particular Haste and its
+  type system.
+-}
 {-# LANGUAGE CPP #-}
 module Main where
 import Haste.App
@@ -9,7 +29,6 @@ import Text.Printf
 import Debug.Trace
 import Text.Regex.PCRE
 import qualified Data.Set as Set
-import Debug.Trace
 import Data.IORef
 #ifndef __HASTE__
 import Data.String.Utils
@@ -17,6 +36,11 @@ import Network.HTTP hiding (Connection)
 import Text.HTML.TagSoup
 #endif
 
+{-
+  This is just a tracing function with log levels that I use; you
+  can ignore it unless you're especially interested in that sort of
+  thing. This version only works in monadic contexts
+-}
 data TraceLevel = Crazy | Debug | Info | Error deriving (Show, Eq, Ord)
 traceLevel = Crazy
 rlpTraceM :: (Monad m) => TraceLevel -> String -> m ()
@@ -24,181 +48,38 @@ rlpTraceM level msg
   | level >= traceLevel = traceM msg
   | otherwise          = return ()
 
-data Path = Path {
-    pconns :: [Connection]
-  , pdest :: LocationName
-} deriving (Show, Eq)
-
 type LocationName = String
 
 type ConnectionType = String
 
+{-
+  This type describes a link between two in-game locations; we use
+  these to build paths between two points, and we present the
+  shortest to the user.  The ConnectionType is the type of travel
+  (boat, giant bug, various kinds of teleportation, etc).
+-}
 data Connection = Connection {
     origin :: LocationName
   , destination :: LocationName
   , ctype :: ConnectionType
 } deriving (Eq, Ord)
 
--- Saves us having to write a Binary instance for Connection
-connToList :: Connection -> [String]
-connToList conn = [
-    (origin conn), (destination conn), (ctype conn)
-  ]
 
--- Saves us having to write a Binary instance for Connection
-listToConn :: [String] -> Connection
-listToConn [orig, dest, ctypeStr] = Connection { origin=orig, destination=dest, ctype=ctypeStr }
-
-fixLocName :: LocationName -> LocationName
-fixLocName "" = "Balmora"
-fixLocName "Vivec" = "Vivec (city)"
-fixLocName "Fort Darius" = "Gnisis"
-fixLocName "Fort Pelagiad" = "Pelagiad"
-fixLocName "Moonmoth Legion fort" = "Moonmoth Legion Fort"
-fixLocName "Ald'Ruhn" = "Ald'ruhn"
-fixLocName lname = lname
-
-fixPageForWeb :: LocationName -> String
-fixPageForWeb pname =
-#ifdef __HASTE__
-  pname
-#else
-  replace " " "_" pname
-#endif
-
--- Example of what we're parsing here:
---
--- <td style="text-align:left;"><b>Transport:</b><br />
--- <p><a href="/wiki/Morrowind:Almsivi_Intervention" title="Morrowind:Almsivi Intervention">Almsivi Intervention</a>:<br /></p>
--- <ul>
--- <li><a href="/wiki/Morrowind:Ald%27ruhn" title="Morrowind:Ald'ruhn">Ald'ruhn</a></li>
--- </ul>
--- <p><a href="/wiki/Morrowind:Divine_Intervention" title="Morrowind:Divine Intervention">Divine Intervention</a>:<br /></p>
--- <ul>
--- <li><a href="/wiki/Morrowind:Wolverine_Hall" title="Morrowind:Wolverine Hall">Wolverine Hall</a><br /></li>
--- </ul>
--- <p><a href="/wiki/Morrowind:Transport#Boat" title="Morrowind:Transport">Boat</a>:<br /></p>
--- <ul>
--- <li><a href="/wiki/Morrowind:Dagon_Fel" title="Morrowind:Dagon Fel">Dagon Fel</a></li>
--- <li><a href="/wiki/Morrowind:Sadrith_Mora" title="Morrowind:Sadrith Mora">Sadrith Mora</a></li>
--- <li><a href="/wiki/Morrowind:Tel_Aruhn" title="Morrowind:Tel Aruhn">Tel Aruhn</a></li>
--- <li><a href="/wiki/Morrowind:Vos" title="Morrowind:Vos">Vos</a></li>
--- </ul>
--- </td>
-
-pageToConnections :: LocationName -> IO [Connection]
-pageToConnections originPage = do
-#ifdef __HASTE__
-    return [ Connection { origin="Balmora", destination="Vivec", ctype="Guild Guide" } ]
-#else
-    let openURL x = getResponseBody =<< simpleHTTP (getRequest x)
-    tags <- fmap parseTags $ openURL (printf "http://www.uesp.net/wiki/Morrowind:%s" $ fixPageForWeb originPage)
-    -- Get a list of all the transports
-    let transports1 = filter (\x -> Data.List.isInfixOf "Transport:" (innerText x)) $ partitions (~== "<td>") tags
-    let transports = if (length transports1) > 0
-        then partitions (~== "<p>") $ head transports1
-        else []
-    return $ concat $ map transToConns transports
-      where
-        transToConns x = map destToConn tDests
-          where
-            -- Get the transport's name
-            tName1 = partitions (~== "<a>") x
-            tName = if (length tName1) > 0
-                then innerText $ takeWhile (not . isTagClose) $ head tName1
-                else "None"
-            -- Get the transport's destinations
-            tDests = filter (/= "") $ lines $ replace "'''" "" $ replace " (split)" "" $ replace "/" "\n" $ innerText $ concat $ partitions (~== "<li>") $ concat $ partitions (~== "<ul>") x
-            destToConn dest = Connection { origin=(fixLocName originPage), destination=(fixLocName dest), ctype=tName }
-            -- trace (printf "In destToConn: %s, %s, %s" originPage dest tName) $ 
-#endif
-
--- Server side function that checks an IORef and if it has boring
--- data, runs makeConnections to get all the connection info and
--- stuffs it into said IORef.  In either case, returns the
--- connections.
-getConns :: Server (IORef [[String]]) -> Server [[String]]
-getConns remoteConnsIORef = do
-  remoteConnsRef <- remoteConnsIORef
-  remoteConns <- liftIO $ readIORef remoteConnsRef
-  if length remoteConns > 1 then do
-    return remoteConns
-  else do
-    conns <- liftIO $ makeConnections Set.empty Set.empty $ Set.fromList ["Ald'ruhn","Balmora","Ebonheart","Sadrith Mora","Vivec","Caldera","Gnisis","Maar Gan","Molag Mar","Pelagiad","Suran","Tel Mora","Ald Velothi","Dagon Fel","Gnaar Mok","Hla Oad","Khuul","Tel Aruhn","Tel Branora","Seyda Neen","Vos","Tel Fyr","Tel Vos","Buckmoth Legion Fort","Moonmoth Legion Fort","Wolverine Hall","Ahemmusa Camp","Erabenimsun Camp","Urshilaku Camp","Zainab Camp","Indarys Manor","Rethan Manor","Tel Uvirith"]
-    _ <- liftIO $ writeIORef remoteConnsRef $ map connToList conns
-    newConns <- liftIO $ readIORef remoteConnsRef
-    return newConns
-
--- Repeatedly take the first to-do item, add all its connections,
--- stick it in done, stick anything that comes up that isn't already
--- in done or to-do in to-do when to-do is empty, return connections
-makeConnections :: Set.Set Connection -> Set.Set LocationName -> Set.Set LocationName -> IO [Connection]
-makeConnections connections doneLocs toDoLocs
-  | Set.null toDoLocs = do
-      _ <- rlpTraceM Crazy (printf "makeConnections is done: %s" $ show $ Set.toList connections)
-      return $ Set.toList connections
-  | otherwise = do
-      _ <- rlpTraceM Crazy (printf "makeConnections: %s -- %s -- %s -- %s" (show $ Set.toList connections) (show $ Set.toList doneLocs) (show $ Set.toList toDoLocs) (show $ Set.findMin toDoLocs))
-      let nextLoc = fixLocName $ Set.findMin toDoLocs
-      let toDoRemainder = Set.deleteMin toDoLocs
-      newConns <- pageToConnections nextLoc
-      let newDoneLocs = Set.insert nextLoc doneLocs
-      -- the todo list becomes everything left in the todo list
-      -- plus all the new destinations minus all the locations
-      -- we've done before
-      let newToDo = (Set.difference (Set.union toDoRemainder $ Set.fromList $ map fixLocName $ map destination newConns) newDoneLocs)
-      makeConnections
-                (Set.union connections $ Set.fromList newConns)
-                newDoneLocs
-                newToDo
-
+-- Pretty printing.
 instance Show Connection where
   show (Connection _ sdest "None") = printf "You start in %s." sdest
   show (Connection sorigin sdestination sctype) = printf "Go from %s to %s by %s." sorigin sdestination sctype
 --  show (Connection sorigin sdestination sctype) = printf "/  %s--%s--%s  /" sorigin sdestination sctype
 
-reducePaths :: [LocationName] -> [Path] -> [Path]
-reducePaths dests (path:paths) =
-  if (pdest path) `elem` dests then
-    [] ++ reducePaths dests paths
-  else
-    [path] ++ reducePaths (dests ++ [(pdest path)]) paths
-reducePaths _ [] = []
-
-expandPaths :: [Connection] -> [Path] -> [Path]
-expandPaths connections paths =
-  paths ++ concatMap (addPaths connections) paths
-
-addPaths :: [Connection] -> Path -> [Path]
-addPaths connections start =
-  map (extendMatchingPath start) connections
-
-extendMatchingPath :: Path -> Connection -> Path
-extendMatchingPath path conn =
-  if (pdest path) == (origin conn) then
-    Path { pconns=((pconns path) ++ [conn]), pdest=(destination conn) }
-  else
-    path
-
-findPath :: [Connection] -> LocationName -> LocationName -> [Path] -> Path
-findPath connections start end paths = trace (printf "In findPath: start: %s, end: %s, paths: %s" start end (show paths)) $
-  case maybePath of
-    Nothing ->
-      -- If we didn't add any new destinations, we've exhausted the
-      -- search tree; give up
-      if paths == newPaths then
-        error $ printf "No path to %s found!" end
-      else
-        findPath connections start end newPaths
-    Just path -> path
-  where maybePath = find (\x -> (pdest x) == end) paths
-        -- We inject the start path, even if we have other paths,
-        -- every time.  This way we don't have to make any
-        -- decisions, and it's pretty cheap.
-        newPaths = reducePaths [] $ expandPaths connections $ Path { pdest=start, pconns=[Connection { origin=start, destination=start, ctype="None" }] } : paths
+-- This type describes a path from one game location to another;
+-- it's what we return to the user.
+data Path = Path {
+    pconns :: [Connection]
+  , pdest :: LocationName
+} deriving (Show, Eq)
 
 -- Old stuff, here for reference as to what the structures look
--- like.
+-- like.  We now generate these structures by web scraping.
 --
 -- connections :: [Connection]
 -- connections = [
@@ -218,7 +99,145 @@ findPath connections start end paths = trace (printf "In findPath: start: %s, en
 --   , "Vivec"
 --   ]
 
-makeOption :: String -> IO Elem
+
+
+
+main :: IO ()
+main = do
+  {-
+    As the Haste docs suggest, our entire program is one runApp
+    call.
+
+    Type details:
+    
+    The first argument is an AppCfg , which is basically just the
+    server to connect to for websockets
+   
+    The second argument is an App value, which means the do is in
+    the App monad.  The primary interesting thing that the App
+    monad does is that any Exports (which are lines of
+    communication between the web side and the server side; they
+    are generated by "remote" and "onSessionEnd") (haste also calls
+    these method calls) that are monadically processed here will
+    become part of our app's structure, i.e. "remote" calls here
+    result in new lines of communication between the web and server
+    sides.
+  -}
+  runApp (mkConfig "vrici.lojban.org" 24601) $ do
+    -- Make an IORef on the server side to hold the results of the
+    -- web scraping.
+    --
+    -- Type details:
+    --
+    -- liftServerIO gives it the App monad type (specifically
+    -- "App (Server a)"), which is the monad we're in. We then
+    -- unpack it with <- , so remoteConns has type "Server a" or, to
+    -- be more precise, "Server (IORef [[String]])", because of the
+    -- type of the IORef.
+    remoteConns <- liftServerIO $ newIORef [["nothing"]]
+
+    -- Make an API call for the server-side function we use to get
+    -- the Connection list.
+    --
+    -- Type details:
+    --
+    -- getConns takes a "Server (IORef [[String]])" and returns
+    -- "Server [[String]]".
+    --
+    -- remote takes any "Remotable" type,
+    -- which is anything that can be serialized; see
+    -- haste-compiler/libraries/haste-lib/src/Haste/Binary.hs .
+    -- This includes the standard/basic types, which is why we're
+    -- doing it on a [[String]] instead of [Connection].  This
+    -- requires that we be able to convert between the two
+    -- representations, but that's easy and writing a Binary
+    -- instance for a custom type is not.
+    --
+    -- remote returns "App (Remote a)", and then we strip the App
+    -- off, leaving us with a "Remote a", and specifically a
+    -- "Remote (Server [[String]])", which is why clientMain wants
+    -- that.  :)
+    remoteGetConns <- remote (getConns remoteConns)
+
+    -- Pass the API call in question to our client-side computation
+    runClient $ clientMain remoteGetConns
+
+-- *********************************************************
+--       CLIENT SIDE
+-- *********************************************************
+
+-- The client-side computation.  Takes one API call's info.  Returns
+-- nothing; here only for side effects.
+--
+-- This is the bit that runs in the browser.  With this particular
+-- app, nothing runs on the server side unless the client side asks
+-- for it.
+clientMain :: Remote (Server [[String]]) -> Client ()
+clientMain remoteGetConns = do
+    -- Run our one API call: make the connection list on the server
+    -- and return it as a [[String]] (which we use because then
+    -- we don't have to write an instance of Binary for Connection)
+    --
+    -- onServer simply takes a "Remote (Server a)" and runs it on
+    -- the server.  It does this by making a websocket connection,
+    -- and then using the Haste.Binary serialization to pass data to
+    -- and from the server.
+    connectionStr <- onServer remoteGetConns
+
+    -- Turn the list of lists back into [Connection]
+    let connections = map listToConn connectionStr
+
+    -- Get all the destinations from the connections, and use it to
+    -- populate the location name dropdowns.
+    let locations = sort $ nub $ map destination connections
+
+    -- Get some off of our index.html (which is super simple)
+    maybeStart <- elemById "start"
+    maybeEnd <- elemById "end"
+    maybeResult <- elemById "result"
+
+    -- Generate the lists <option> tags of locations, for the
+    -- dropdowns we just grabbed.
+    startLocationElems <- makeLocationElems locations
+    endLocationElems <- makeLocationElems locations
+
+    case (maybeStart, maybeEnd, maybeResult) of
+      (Nothing, _, _) -> error "Start dropdown not found"
+      (_, Nothing, _) -> error "End dropdown not found"
+      (_, _, Nothing) -> error "Result element not found"
+      (Just start, Just end, Just result) -> do 
+          addChildren start startLocationElems
+          addChildren end endLocationElems
+          handleSelection connections start end result
+          return ()
+
+-- Saves us having to write a Binary instance for Connection
+connToList :: Connection -> [String]
+connToList conn = [
+    (origin conn), (destination conn), (ctype conn)
+  ]
+
+-- Saves us having to write a Binary instance for Connection
+listToConn :: [String] -> Connection
+listToConn [orig, dest, ctypeStr] = Connection { origin=orig, destination=dest, ctype=ctypeStr }
+
+-- In many of the functions that follow, "Client" is a standin for
+-- "IO".  Specifically, the Haste.DOM functions all pretty much look
+-- like:
+--
+-- (Functor m, MonadIO m) => a -> m Elem
+--
+-- for some "a", so these need to be IO-like.  The Client monad is
+-- a MonadIO, so leaving it in Client saves us some liftIO calls and
+-- the like.
+
+-- Turn a list of LocationName into a list of <option>...</option>
+-- elements.
+makeLocationElems :: [LocationName] -> Client [Elem]
+makeLocationElems locations = mapM makeOption locations
+
+-- Make an <option> tag.
+makeOption :: String -> Client Elem
 makeOption opt = do
   optElem <- newElem "option"
   set optElem [attr "value" =: opt]
@@ -226,76 +245,296 @@ makeOption opt = do
   addChild inner optElem
   return optElem
 
-makeLocationElems :: [LocationName] -> IO [Elem]
-makeLocationElems locations = mapM makeOption locations
-
-addChildren :: Elem -> [Elem] -> IO ()
+-- Add a list of elements as children to the given element.
+addChildren :: Elem -> [Elem] -> Client ()
 addChildren parent childs = sequence_ [addChild c parent | c <- childs]
 
-makeP :: String -> IO Elem
+-- This is the part that actually drives processing: it sets up the
+-- event callbacks for what happens when a user picks a dropdown
+-- item.
+handleSelection :: [Connection] -> Elem -> Elem -> Elem -> Client ()
+handleSelection connections start end result = do
+  _ <- onEvent start Change $ handleFind connections start end result
+  _ <- onEvent end Change $ handleFind connections start end result
+  return ()
+
+-- Once the user has picked start and end points, this function
+-- takes them and kicks off the path computation
+handleFind :: [Connection] -> Elem -> Elem -> Elem -> EventData BasicEvent -> Client ()
+handleFind connections start end result _ = do
+    -- Blank out the result element
+    clearChildren result
+
+    -- Get the start and end elements
+    maybeStart <- getValue start
+    maybeEnd <- getValue end
+
+    case (maybeStart, maybeEnd) of
+      (Nothing, _) -> error "Couldn't get value for starting point."
+      (_, Nothing) -> error "Couldn't get value for ending point."
+      (Just startName, Just endName) -> do
+        -- Make the result be a series of <p> elements that are just
+        -- the "show" values of the list returned by findPath ;
+        -- findPath does all the work
+        pathPrints <- rowsHtmlShow $ pconns $ findPath connections startName endName []
+        addChildren result pathPrints
+        liftIO $ preventDefault
+
+-- Make a <p> tag out of a string.
+makeP :: String -> Client Elem
 makeP string = do
   p <- newElem "p"
   text <- newTextElem string
   setChildren p [text]
   return p
 
-rowsHtmlShow :: [Connection] -> IO [Elem]
+-- Just turns a list into <p> tags.
+rowsHtmlShow :: [Connection] -> Client [Elem]
 rowsHtmlShow sconns = mapM (makeP . show) sconns
 
-handleFind :: [Connection] -> Elem -> Elem -> Elem -> EventData BasicEvent -> IO ()
-handleFind connections start end result _ = do
-    clearChildren result
-    maybeStart <- getValue start
-    maybeEnd <- getValue end
-    case (maybeStart, maybeEnd) of
-      (Nothing, _) -> error "Couldn't get value for starting point."
-      (_, Nothing) -> error "Couldn't get value for ending point."
-      (Just startName, Just endName) -> do
-        pathPrints <- rowsHtmlShow $ pconns $ findPath connections startName endName []
-        addChildren result pathPrints
-        preventDefault
+-- findPath is the meat of the data processing (as opposed to the
+-- data scraping, which lives in makeConnections and friends).
+--
+-- Starting with a list of pasts that consists soley of the given
+-- starting point, repeatedly adds any destinations that can be
+-- reached from any path in the list of paths.  Stops either when
+-- our target destination is one of those that can now be reached,
+-- or when no new destinations can be reached.
+--
+-- NB: the "trace" call here ends up in the javascript console,
+-- which I think is pretty cool.
+findPath :: [Connection] -> LocationName -> LocationName -> [Path] -> Path
+findPath connections start end paths = trace (printf "In findPath: start: %s, end: %s, paths: %s" start end (show paths)) $
+  case maybePath of
+    Nothing ->
+      -- If we didn't add any new destinations, we've exhausted the
+      -- search tree; give up
+      if paths == newPaths then
+        error $ printf "No path to %s found!" end
+      else
+        findPath connections start end newPaths
+    Just path -> path
+  where maybePath = find (\x -> (pdest x) == end) paths
+        -- We inject the start path, even if we have other paths,
+        -- every time.  This way we don't have to make any
+        -- decisions, and it's pretty cheap.
+        newPaths = reducePaths [] $ expandPaths connections $ Path { pdest=start, pconns=[Connection { origin=start, destination=start, ctype="None" }] } : paths
 
-handleSelection :: [Connection] -> Elem -> Elem -> Elem -> IO ()
-handleSelection connections start end result = do
-  _ <- onEvent start Change $ handleFind connections start end result
-  _ <- onEvent end Change $ handleFind connections start end result
-  return ()
+-- Starting with the empty list and a list of Paths, add the
+-- destination of each Path to the list, and drop any element in the
+-- Path list that is a path to a destination we've already seen.
+--
+-- In other words, de-dupe for Path lists, with a preference for the
+-- shortest (== leftmost in the list; it's a side effect of the way we
+-- add Paths) path.
+reducePaths :: [LocationName] -> [Path] -> [Path]
+reducePaths dests (path:paths) =
+  if (pdest path) `elem` dests then
+    [] ++ reducePaths dests paths
+  else
+    [path] ++ reducePaths (dests ++ [(pdest path)]) paths
+reducePaths _ [] = []
 
--- The client-side computation.  Takes one API call's info.
-clientMain :: Remote (Server [[String]]) -> Client ()
-clientMain remoteGetConns = do
-    -- Run our one API call: make the connection list on the server
-    -- and return it as a list of lists
-    connectionStr <- onServer remoteGetConns
-    let connections = map listToConn connectionStr
-    let locations = sort $ nub $ map destination connections
+-- Add all possible connections to the given paths.  In other words,
+-- for every path, go to everywhere we could go from the current end
+-- point of that path.
+expandPaths :: [Connection] -> [Path] -> [Path]
+expandPaths connections paths =
+  paths ++ concatMap (addPaths connections) paths
 
-    maybeStart <- elemById "start"
-    maybeEnd <- elemById "end"
-    maybeResult <- elemById "result"
-    startLocationElems <- liftIO $ makeLocationElems locations
-    endLocationElems <- liftIO $ makeLocationElems locations
-    case (maybeStart, maybeEnd, maybeResult) of
-      (Nothing, _, _) -> error "Start dropdown not found"
-      (_, Nothing, _) -> error "End dropdown not found"
-      (_, _, Nothing) -> error "Result element not found"
-      (Just start, Just end, Just result) -> liftIO $ do 
-          addChildren start startLocationElems
-          addChildren end endLocationElems
-          handleSelection connections start end result
-          return ()
+-- Add all possible connections to the given path.
+addPaths :: [Connection] -> Path -> [Path]
+addPaths connections start =
+  map (extendMatchingPath start) connections
 
-main :: IO ()
-main = do
-  runApp (mkConfig "vrici.lojban.org" 24601) $ do
-    -- Make an IORef on the server side to hold the results of the
-    -- web scraping.  liftServerIO gives it the App monad type
-    -- (specifically "App (Server a)", which is the monad we're in.
-    remoteConns <- liftServerIO $ newIORef [["nothing"]]
+-- Add the given Connection to the given Path, i.e. make the Path
+-- one step longer.
+extendMatchingPath :: Path -> Connection -> Path
+extendMatchingPath path conn =
+  if (pdest path) == (origin conn) then
+    Path { pconns=((pconns path) ++ [conn]), pdest=(destination conn) }
+  else
+    path
 
-    -- Make an API call for the server-side function we use to get
-    -- the Connection list.
-    remoteGetConns <- remote (getConns remoteConns)
+-- *********************************************************
+--       SERVER SIDE
+-- *********************************************************
 
-    -- Pass the API call in question to our client-side computation
-    runClient $ clientMain remoteGetConns
+-- This is an API call endpoint; that is, this function gets
+-- "called" from the client/Haste side, but runs on the server/GHC
+-- side, and the "call" is via binary serialization over websockets.
+--
+-- Freaking magic, in other words.  :D
+--
+-- Server side function that checks an IORef and if it has boring
+-- data (i.e. has never been populated for real), runs
+-- makeConnections to get all the connection info and stuffs it into
+-- said IORef.  In either case, returns the connections.
+--
+-- The Server type here doesn't actually do anything except that
+-- Haste won't run these, so they have to be run on the GHC side.
+getConns :: Server (IORef [[String]]) -> Server [[String]]
+getConns remoteConnsIORef = do
+  -- Pull our IORef out of the Server monad
+  remoteConnsRef <- remoteConnsIORef
+  -- And since all the IORef stuff is in IO, might as well just do a
+  -- whole pile of stuff in the IO monad.  We then pull the result
+  -- out of the IO monad, so we should end up with a straight
+  -- [[String]]
+  ioConns <- liftIO $ do
+    remoteConns <- readIORef remoteConnsRef
+    if length remoteConns > 1 then do
+      -- Looks like real data
+      return remoteConns
+    else do
+      -- Do the connection generation.  This static list of
+      -- locations is maybe not ideal, but if we start with this
+      -- list we're pretty much guaranteed to hit every reachable
+      -- location, even if this list isn't complete (which it
+      -- probably is).
+      conns <- makeConnections Set.empty Set.empty $ Set.fromList ["Ald'ruhn","Balmora","Ebonheart","Sadrith Mora","Vivec","Caldera","Gnisis","Maar Gan","Molag Mar","Pelagiad","Suran","Tel Mora","Ald Velothi","Dagon Fel","Gnaar Mok","Hla Oad","Khuul","Tel Aruhn","Tel Branora","Seyda Neen","Vos","Tel Fyr","Tel Vos","Buckmoth Legion Fort","Moonmoth Legion Fort","Wolverine Hall","Ahemmusa Camp","Erabenimsun Camp","Urshilaku Camp","Zainab Camp","Indarys Manor","Rethan Manor","Tel Uvirith"]
+      -- Stick the connections *as a [[String]]* rather than a
+      -- [Connection], into our IORef
+      _ <- writeIORef remoteConnsRef $ map connToList conns
+      -- Pull the data back out of our IORef
+      newConns <- readIORef remoteConnsRef
+      return newConns
+  -- Put the [[String]] back in the Server monad
+  return ioConns
+
+-- Starts with a list of locations.  Scrapes the Morrowind wiki (
+-- http://www.uesp.net/wiki/ ) for all the travel/connection
+-- information for each of those locations, and returns
+-- IO [Connection]
+--
+-- This and its children are in IO because of the web scraping.
+-- They could have been in Server I guess, but it was more
+-- convenient this way due to the mix of this function with a bunch
+-- of IORef stuff in getConns
+--
+-- The algorithm:
+--
+-- Repeatedly take the first to-do item, add all its connections,
+-- stick it in done, stick anything that comes up into to-do if it
+-- isn't already in done or to-do.  When to-do is empty, return
+-- connections.
+makeConnections :: Set.Set Connection -> Set.Set LocationName -> Set.Set LocationName -> IO [Connection]
+makeConnections connections doneLocs toDoLocs
+  | Set.null toDoLocs = do
+      _ <- rlpTraceM Crazy (printf "makeConnections is done: %s" $ show $ Set.toList connections)
+      -- We're done, return the results
+      return $ Set.toList connections
+  | otherwise = do
+      _ <- rlpTraceM Crazy (printf "makeConnections: %s -- %s -- %s -- %s" (show $ Set.toList connections) (show $ Set.toList doneLocs) (show $ Set.toList toDoLocs) (show $ Set.findMin toDoLocs))
+      -- Because these are sets they're unordered by default, so we
+      -- take the minimum item as our next to-do item.
+      let nextLoc = fixLocName $ Set.findMin toDoLocs
+      let toDoRemainder = Set.deleteMin toDoLocs
+
+      -- Turn our to-do item into a bunch of connections; this is
+      -- hwere the web scraping happens.
+      newConns <- pageToConnections nextLoc
+
+      -- And we're done with that page.
+      let newDoneLocs = Set.insert nextLoc doneLocs
+
+      -- the todo list becomes everything left in the todo list
+      -- plus all the new destinations minus all the locations
+      -- we've done before
+      let newToDo = (Set.difference (Set.union toDoRemainder $ Set.fromList $ map fixLocName $ map destination newConns) newDoneLocs)
+
+      -- Recursive call to get more stuff done.
+      makeConnections
+                (Set.union connections $ Set.fromList newConns)
+                newDoneLocs
+                newToDo
+
+-- Deal with some idiosyncracies of the web data; take location
+-- names that the web might generate and turn them into things we
+-- can actually lookup as URLs.
+fixLocName :: LocationName -> LocationName
+fixLocName "" = "Balmora"
+fixLocName "Vivec" = "Vivec (city)"
+fixLocName "Fort Darius" = "Gnisis"
+fixLocName "Fort Pelagiad" = "Pelagiad"
+fixLocName "Moonmoth Legion fort" = "Moonmoth Legion Fort"
+fixLocName "Ald'Ruhn" = "Ald'ruhn"
+fixLocName lname = lname
+
+-- Webformatting the URLs; turns out to be pretty easy this time.
+fixPageForWeb :: LocationName -> String
+fixPageForWeb pname =
+-- This is never run on the Haste side.
+--
+-- The Haste side doesn't have missingh, which means no "replace",
+-- hence this CPP #ifdef.
+#ifdef __HASTE__
+  pname
+#else
+  replace " " "_" pname
+#endif
+
+-- pageToConnections takes a location, scrapes the Morrowind wiki
+-- page for that location, and returns all the connections between
+-- that location and other locations.
+--
+-- Example of what we're parsing here:
+--
+-- <td style="text-align:left;"><b>Transport:</b><br />
+-- <p><a href="/wiki/Morrowind:Almsivi_Intervention" title="Morrowind:Almsivi Intervention">Almsivi Intervention</a>:<br /></p>
+-- <ul>
+-- <li><a href="/wiki/Morrowind:Ald%27ruhn" title="Morrowind:Ald'ruhn">Ald'ruhn</a></li>
+-- </ul>
+-- <p><a href="/wiki/Morrowind:Divine_Intervention" title="Morrowind:Divine Intervention">Divine Intervention</a>:<br /></p>
+-- <ul>
+-- <li><a href="/wiki/Morrowind:Wolverine_Hall" title="Morrowind:Wolverine Hall">Wolverine Hall</a><br /></li>
+-- </ul>
+-- <p><a href="/wiki/Morrowind:Transport#Boat" title="Morrowind:Transport">Boat</a>:<br /></p>
+-- <ul>
+-- <li><a href="/wiki/Morrowind:Dagon_Fel" title="Morrowind:Dagon Fel">Dagon Fel</a></li>
+-- <li><a href="/wiki/Morrowind:Sadrith_Mora" title="Morrowind:Sadrith Mora">Sadrith Mora</a></li>
+-- <li><a href="/wiki/Morrowind:Tel_Aruhn" title="Morrowind:Tel Aruhn">Tel Aruhn</a></li>
+-- <li><a href="/wiki/Morrowind:Vos" title="Morrowind:Vos">Vos</a></li>
+-- </ul>
+-- </td>
+pageToConnections :: LocationName -> IO [Connection]
+pageToConnections originPage = do
+-- This is never run on the Haste side.
+--
+-- We CPP #ifdef the whole thing away on the Haste side because the
+-- Haste side doesn't have any of the webscraping libraries we use,
+-- so we just return something of the correct type.
+#ifdef __HASTE__
+    return [ Connection { origin="Balmora", destination="Vivec", ctype="Guild Guide" } ]
+#else
+    let openURL x = getResponseBody =<< simpleHTTP (getRequest x)
+    -- Get a tagsoup tags list from the page in question.
+    tags <- fmap parseTags $ openURL (printf "http://www.uesp.net/wiki/Morrowind:%s" $ fixPageForWeb originPage)
+
+    -- Get a list of all the transports by finding all the <td>
+    -- elements and finding the one with the string "Transport:"
+    -- inside.
+    let transports1 = filter (\x -> Data.List.isInfixOf "Transport:" (innerText x)) $ partitions (~== "<td>") tags
+
+    -- Break the transports <td>'s contents up by <p> tags, which
+    -- means one transport type per partition.
+    let transports = if (length transports1) > 0
+        then partitions (~== "<p>") $ head transports1
+        else []
+
+    return $ concat $ map transToConns transports
+      where
+        transToConns trans = map destToConn tDests
+          where
+            -- Get the transport's name
+            tName1 = partitions (~== "<a>") trans
+            tName = if (length tName1) > 0
+                then innerText $ takeWhile (not . isTagClose) $ head tName1
+                else "None"
+            -- Get the transport's destinations; basically this gets
+            -- all the <li> elements, takes their text values, and
+            -- makes sure they are formatter correctly.
+            tDests = filter (/= "") $ lines $ replace "'''" "" $ replace " (split)" "" $ replace "/" "\n" $ innerText $ concat $ partitions (~== "<li>") $ concat $ partitions (~== "<ul>") trans
+            destToConn dest = Connection { origin=(fixLocName originPage), destination=(fixLocName dest), ctype=tName }
+            -- trace (printf "In destToConn: %s, %s, %s" originPage dest tName) $ 
+#endif
