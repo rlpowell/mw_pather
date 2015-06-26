@@ -26,5 +26,9 @@ docker_build:
 docker_run:
 	sudo docker kill mw_pather || true
 	sudo docker rm mw_pather || true
-	sudo docker run --name mw_pather -t -i -v /home/rlpowell/src/mw_pather/:/srv/haste/mw_pather/:rw -p 0.0.0.0:24601:24601 rlpowell/mw_pather
-	sudo docker attach mw_pather
+	sudo docker run --name mw_pather -d -t --entrypoint="/bin/bash" -v /home/rlpowell/src/mw_pather/:/srv/haste/mw_pather/:rw -p 0.0.0.0:24601:24601 rlpowell/mw_pather -c 'cd /srv/haste/mw_pather ; make ; ./mw_pather'
+
+docker_run_interactive:
+	sudo docker kill mw_pather || true
+	sudo docker rm mw_pather || true
+	sudo docker run --name mw_pather -t -v /home/rlpowell/src/mw_pather/:/srv/haste/mw_pather/:rw -p 0.0.0.0:24601:24601 rlpowell/mw_pather
