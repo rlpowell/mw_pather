@@ -27,7 +27,7 @@ import Data.List
 import Control.Applicative
 import Text.Printf
 import Debug.Trace
-import Text.Regex.PCRE
+-- import Text.Regex.PCRE
 import qualified Data.Set as Set
 import Data.IORef
 #ifndef __HASTE__
@@ -242,12 +242,12 @@ makeOption opt = do
   optElem <- newElem "option"
   set optElem [attr "value" =: opt]
   inner <- newTextElem opt
-  addChild inner optElem
+  appendChild optElem inner
   return optElem
 
 -- Add a list of elements as children to the given element.
 addChildren :: Elem -> [Elem] -> Client ()
-addChildren parent childs = sequence_ [addChild c parent | c <- childs]
+addChildren parent childs = sequence_ [appendChild parent c | c <- childs]
 
 -- This is the part that actually drives processing: it sets up the
 -- event callbacks for what happens when a user picks a dropdown
@@ -383,22 +383,23 @@ getConns remoteConnsIORef = do
   -- [[String]]
   ioConns <- liftIO $ do
     remoteConns <- readIORef remoteConnsRef
-    if length remoteConns > 1 then do
-      -- Looks like real data
-      return remoteConns
-    else do
-      -- Do the connection generation.  This static list of
-      -- locations is maybe not ideal, but if we start with this
-      -- list we're pretty much guaranteed to hit every reachable
-      -- location, even if this list isn't complete (which it
-      -- probably is).
-      conns <- makeConnections Set.empty Set.empty $ Set.fromList ["Ald'ruhn","Balmora","Ebonheart","Sadrith Mora","Vivec","Caldera","Gnisis","Maar Gan","Molag Mar","Pelagiad","Suran","Tel Mora","Ald Velothi","Dagon Fel","Gnaar Mok","Hla Oad","Khuul","Tel Aruhn","Tel Branora","Seyda Neen","Vos","Tel Fyr","Tel Vos","Buckmoth Legion Fort","Moonmoth Legion Fort","Wolverine Hall","Ahemmusa Camp","Erabenimsun Camp","Urshilaku Camp","Zainab Camp","Indarys Manor","Rethan Manor","Tel Uvirith"]
-      -- Stick the connections *as a [[String]]* rather than a
-      -- [Connection], into our IORef
-      _ <- writeIORef remoteConnsRef $ map connToList conns
-      -- Pull the data back out of our IORef
-      newConns <- readIORef remoteConnsRef
-      return newConns
+    if length remoteConns > 1
+      then do
+        -- Looks like real data
+        return remoteConns
+      else do
+        -- Do the connection generation.  This static list of
+        -- locations is maybe not ideal, but if we start with this
+        -- list we're pretty much guaranteed to hit every reachable
+        -- location, even if this list isn't complete (which it
+        -- probably is).
+        conns <- makeConnections Set.empty Set.empty $ Set.fromList ["Ald'ruhn","Balmora","Ebonheart","Sadrith Mora","Vivec","Caldera","Gnisis","Maar Gan","Molag Mar","Pelagiad","Suran","Tel Mora","Ald Velothi","Dagon Fel","Gnaar Mok","Hla Oad","Khuul","Tel Aruhn","Tel Branora","Seyda Neen","Vos","Tel Fyr","Tel Vos","Buckmoth Legion Fort","Moonmoth Legion Fort","Wolverine Hall","Ahemmusa Camp","Erabenimsun Camp","Urshilaku Camp","Zainab Camp","Indarys Manor","Rethan Manor","Tel Uvirith"]
+        -- Stick the connections *as a [[String]]* rather than a
+        -- [Connection], into our IORef
+        _ <- writeIORef remoteConnsRef $ map connToList conns
+        -- Pull the data back out of our IORef
+        newConns <- readIORef remoteConnsRef
+        return newConns
   -- Put the [[String]] back in the Server monad
   return ioConns
 
@@ -518,9 +519,9 @@ pageToConnections originPage = do
 
     -- Break the transports <td>'s contents up by <p> tags, which
     -- means one transport type per partition.
-    let transports = if (length transports1) > 0
-        then partitions (~== "<p>") $ head transports1
-        else []
+    let transports = if (length transports1) > 0 then
+                        partitions (~== "<p>") $ head transports1
+                      else []
 
     return $ concat $ map transToConns transports
       where
