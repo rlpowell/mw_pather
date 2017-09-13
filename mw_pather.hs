@@ -422,11 +422,11 @@ getConns remoteConnsIORef = do
 makeConnections :: Set.Set Connection -> Set.Set LocationName -> Set.Set LocationName -> IO [Connection]
 makeConnections connections doneLocs toDoLocs
   | Set.null toDoLocs = do
-      _ <- rlpTraceM Crazy (printf "makeConnections is done: %s" $ show $ Set.toList connections)
+      _ <- rlpTraceM Crazy (printf "\nmakeConnections is done: %s\n" $ show $ Set.toList connections)
       -- We're done, return the results
       return $ Set.toList connections
   | otherwise = do
-      _ <- rlpTraceM Crazy (printf "makeConnections: %s -- %s -- %s -- %s" (show $ Set.toList connections) (show $ Set.toList doneLocs) (show $ Set.toList toDoLocs) (show $ Set.findMin toDoLocs))
+      _ <- rlpTraceM Crazy (printf "\nmakeConnections: %s -- %s -- %s -- %s\n" (show $ Set.toList connections) (show $ Set.toList doneLocs) (show $ Set.toList toDoLocs) (show $ Set.findMin toDoLocs))
       -- Because these are sets they're unordered by default, so we
       -- take the minimum item as our next to-do item.
       let nextLoc = fixLocName $ Set.findMin toDoLocs
@@ -435,6 +435,8 @@ makeConnections connections doneLocs toDoLocs
       -- Turn our to-do item into a bunch of connections; this is
       -- hwere the web scraping happens.
       newConns <- pageToConnections nextLoc
+
+      _ <- rlpTraceM Crazy (printf "makeConnections: %s" (show newConns))
 
       -- And we're done with that page.
       let newDoneLocs = Set.insert nextLoc doneLocs
@@ -510,7 +512,9 @@ pageToConnections originPage = do
 #else
     let openURL x = getResponseBody =<< simpleHTTP (getRequest x)
     -- Get a tagsoup tags list from the page in question.
-    tags <- fmap parseTags $ openURL (printf "http://www.uesp.net/wiki/Morrowind:%s" $ fixPageForWeb originPage)
+    tags <- fmap parseTags $ openURL (printf "http://en.uesp.net/wiki/Morrowind:%s" $ fixPageForWeb originPage)
+
+    _ <- rlpTraceM Crazy (printf "In destToConn: tags: %s" (show tags))
 
     -- Get a list of all the transports by finding all the <td>
     -- elements and finding the one with the string "Transport:"
