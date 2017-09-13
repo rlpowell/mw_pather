@@ -7,17 +7,13 @@ export PATH=$(stack path --bin-path):$PATH
 # Clean up old versions of things
 ./clean.sh
 
-# Get haste
-cd /tmp/
-wget http://haste-lang.org/downloads/ghc-7.10/haste-compiler-0.5.5.1_ghc-7.10.3-linux.tar.bz2
-tar -xf haste-compiler-0.5.5.1_ghc-7.10.3-linux.tar.bz2
+cd ~/src/mw_pather/
 
-# Install haste
-cd /tmp/haste-compiler/
-sudo ./install.sh
+# Link to the cache already in docker
+rm -rf .stack-work
+ln -s /tmp/mw_pather/.stack-work .stack-work
 
 # Generate the client side .js file
-cd ~/src/mw_pather/
 hastec mw_pather.hs
 
 # Copy the client side to our web space
