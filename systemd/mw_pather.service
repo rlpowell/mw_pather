@@ -1,0 +1,17 @@
+[Unit]
+Description=Morrowind Path Finder (mw_pather) service
+# Requires=docker.service
+# After=docker.service
+
+[Service]
+Restart=always
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=mw_pather
+WorkingDirectory=/home/rlpowell/src/mw_pather
+ExecStart=/bin/bash -x /home/rlpowell/src/mw_pather/run_mw_pather.sh
+ExecStop=/bin/bash -x /home/rlpowell/src/mw_pather/stop_container.sh
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=default.target
