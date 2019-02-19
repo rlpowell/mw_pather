@@ -7,7 +7,7 @@
   Specifically:
 
   - on the server/ghc side, it scrapes the
-    http://uesp.net/wiki/Main_Page wiki for all the travel
+    https://uesp.net/wiki/Main_Page wiki for all the travel
     information for the towns and cities.
 
   - on the web/haste side, it retrieves and presents that data, lets
@@ -18,6 +18,7 @@
   the various parts of this program, in particular Haste and its
   type system.
 -}
+
 {-# LANGUAGE CPP #-}
 module Main where
 import Haste.App
@@ -32,8 +33,9 @@ import qualified Data.Set as Set
 import Data.IORef
 #ifndef __HASTE__
 import Data.String.Utils
-import Network.HTTP hiding (Connection)
+import Network.HTTP.Conduit hiding (Connection)
 import Text.HTML.TagSoup
+import qualified Data.ByteString.Lazy.Char8 as Char8
 #endif
 
 {-
@@ -404,7 +406,7 @@ getConns remoteConnsIORef = do
   return ioConns
 
 -- Starts with a list of locations.  Scrapes the Morrowind wiki (
--- http://www.uesp.net/wiki/ ) for all the travel/connection
+-- https://www.uesp.net/wiki/ ) for all the travel/connection
 -- information for each of those locations, and returns
 -- IO [Connection]
 --
@@ -456,13 +458,17 @@ makeConnections connections doneLocs toDoLocs
 -- names that the web might generate and turn them into things we
 -- can actually lookup as URLs.
 fixLocName :: LocationName -> LocationName
-fixLocName "" = "Balmora"
-fixLocName "Vivec" = "Vivec (city)"
-fixLocName "Fort Darius" = "Gnisis"
-fixLocName "Fort Pelagiad" = "Pelagiad"
-fixLocName "Moonmoth Legion fort" = "Moonmoth Legion Fort"
-fixLocName "Ald'Ruhn" = "Ald'ruhn"
-fixLocName lname = lname
+fixLocName "" = "Morrowind:Balmora"
+fixLocName "Vivec" = "Morrowind:Vivec (city)"
+fixLocName "Fort Darius" = "Morrowind:Gnisis"
+fixLocName "Fort Pelagiad" = "Morrowind:Pelagiad"
+fixLocName "Moonmoth Legion fort" = "Morrowind:Moonmoth Legion Fort"
+fixLocName "Ald'Ruhn" = "Morrowind:Ald'ruhn"
+fixLocName "Fort FrostmothBM" = "Bloodmoon:Fort Frostmoth"
+fixLocName "Morrowind:Fort Frostmoth" = "Bloodmoon:Fort Frostmoth"
+fixLocName "Morrowind:Raven Rock" = "Bloodmoon:Raven Rock"
+fixLocName "Raven Rock" = "Bloodmoon:Raven Rock"
+fixLocName lname = trace (printf "\nfixLocName: %s\n" $ show $ lname) $ if isInfixOf ":" lname then lname else "Morrowind:" ++ lname
 
 -- Webformatting the URLs; turns out to be pretty easy this time.
 fixPageForWeb :: LocationName -> String
@@ -510,9 +516,10 @@ pageToConnections originPage = do
 #ifdef __HASTE__
     return [ Connection { origin="Balmora", destination="Vivec", ctype="Guild Guide" } ]
 #else
-    let openURL x = getResponseBody =<< simpleHTTP (getRequest x)
+    _ <- rlpTraceM Crazy (printf "\nopening url: %s\n" $ show $ fixPageForWeb originPage)
+    let openURL x = simpleHttp x
     -- Get a tagsoup tags list from the page in question.
-    tags <- fmap parseTags $ openURL (printf "http://en.uesp.net/wiki/Morrowind:%s" $ fixPageForWeb originPage)
+    tags <- fmap (parseTags . Char8.unpack) $ openURL (printf "https://en.uesp.net/wiki/%s" $ fixPageForWeb originPage)
 
     _ <- rlpTraceM Crazy (printf "In destToConn: tags: %s" (show tags))
 
@@ -538,7 +545,7 @@ pageToConnections originPage = do
                 else "None"
             -- Get the transport's destinations; basically this gets
             -- all the <li> elements, takes their text values, and
-            -- makes sure they are formatter correctly.
+            -- makes sure they are formatted correctly.
             tDests = filter (/= "") $ lines $ replace "'''" "" $ replace " (split)" "" $ replace "/" "\n" $ innerText $ concat $ partitions (~== "<li>") $ concat $ partitions (~== "<ul>") trans
             destToConn dest = Connection { origin=(fixLocName originPage), destination=(fixLocName dest), ctype=tName }
             -- trace (printf "In destToConn: %s, %s, %s" originPage dest tName) $ 
