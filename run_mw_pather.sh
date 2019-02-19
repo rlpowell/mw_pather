@@ -1,15 +1,25 @@
-sudo docker kill mw_pather
-sudo docker rm mw_pather
-#sudo docker rmi rlpowell/mw_pather
-sudo docker build -t rlpowell/mw_pather . || {
-  echo "Docker build failed."
+#!/bin/bash
+
+exec 2>&1
+set -e
+set -x
+
+CONTAINER_BIN=${CONTAINER_BIN:-$(which podman)}
+CONTAINER_BIN=${CONTAINER_BIN:-$(which docker)}
+
+sudo $CONTAINER_BIN kill mw_pather || true
+sudo $CONTAINER_BIN rm mw_pather || true
+#sudo $CONTAINER_BIN rmi rlpowell/mw_pather
+sudo $CONTAINER_BIN build -t rlpowell/mw_pather . || {
+  echo "Container build failed."
   exit 1
 }
 
-# Run the docker to generate the javascript client side, and
+# Run the container to generate the javascript client side, and
 # generate and run the executable/Haskell server side
-sudo docker run --name mw_pather --log-driver syslog --log-opt tag=mw_pather \
-  -p 0.0.0.0:2225:22 -p 0.0.0.0:8085:8085 \
+sudo $CONTAINER_BIN run -it --name mw_pather --log-driver syslog --log-opt tag=mw_pather \
+  -p 192.168.123.133:24601:24601 \
+  -v volume--home--rlpowell:/home/rlpowell \
   -v /home/rlpowell/src/mw_pather/:/home/rlpowell/src/mw_pather/:rw \
-  -v /home/rlpowell/public_html/:/home/rlpowell/public_html:rw -p 0.0.0.0:24601:24601 \
-  "$@" rlpowell/mw_pather bash -x /tmp/docker_run_init.sh
+  -v /home/rlpowell/public_html/:/home/rlpowell/public_html:rw \
+  "$@" rlpowell/mw_pather bash -x /tmp/container_run_init.sh

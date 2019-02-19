@@ -1,4 +1,4 @@
-Docker to run a path-finding web app for locations in Morrowind.
+Container to run a path-finding web app for locations in Morrowind.
 
 Launch with ./run_mw_pather.sh
 
