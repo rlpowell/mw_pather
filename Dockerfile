@@ -1,8 +1,5 @@
 FROM rlpowell/stack
 
-RUN mkdir /home/rlpowell/src || true
-RUN mkdir /home/rlpowell/src/mw_pather || true
-
 USER rlpowell
 WORKDIR /home/rlpowell/src/mw_pather
 ENV PATH="/home/rlpowell/.local/bin/:${PATH}"

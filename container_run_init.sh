@@ -4,8 +4,6 @@ set -e
 
 # Set our path to use the right stack
 export PATH=/home/rlpowell/.local/bin/:$PATH
-# Then use it to add more things to the path
-export PATH=$(stack path --bin-path):$PATH
 
 # Clean up old versions of things
 ./clean.sh
