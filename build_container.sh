@@ -10,13 +10,13 @@ set -x
 CONTAINER_BIN=${CONTAINER_BIN:-$(which podman)}
 CONTAINER_BIN=${CONTAINER_BIN:-$(which docker)}
 
-sudo $CONTAINER_BIN kill build_container_mw_pather || true
-sudo $CONTAINER_BIN rm build_container_mw_pather || true
+sudo -u rlpowell $CONTAINER_BIN kill build_container_mw_pather || true
+sudo -u rlpowell $CONTAINER_BIN rm build_container_mw_pather || true
 
-sudo $CONTAINER_BIN build -t rlpowell/mw_pather . || {
+sudo -u rlpowell $CONTAINER_BIN build -t rlpowell/mw_pather . || {
   echo "Container build failed."
   exit 1
 }
 
-sudo $CONTAINER_BIN kill build_container_mw_pather || true
-sudo $CONTAINER_BIN rm build_container_mw_pather || true
+sudo -u rlpowell $CONTAINER_BIN kill build_container_mw_pather || true
+sudo -u rlpowell $CONTAINER_BIN rm build_container_mw_pather || true
